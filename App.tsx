@@ -7,9 +7,9 @@ import { QuizHistory } from './components/QuizHistory';
 import { SavedQuizzes } from './components/SavedQuizzes';
 import { processFileToQuiz } from './services/geminiService';
 import { AppState, QuizData, UserAnswers, UserExplanations, Question, QuizHistoryItem, SavedQuiz, Folder, BATCH_SIZE } from './types';
-import { auth, loginWithGoogle, logout, db } from './firebase';
+import { auth, loginWithGoogle, logout, db, serverTimestamp } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { collection, query, where, getDocs, addDoc, deleteDoc, doc, orderBy, onSnapshot, limit, updateDoc, setDoc, deleteField } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, deleteDoc, doc, orderBy, onSnapshot, limit, updateDoc, setDoc, deleteField, Timestamp } from 'firebase/firestore';
 
 enum OperationType {
   CREATE = 'create',
@@ -25,16 +25,14 @@ interface FirestoreErrorInfo {
   operationType: OperationType;
   path: string | null;
   authInfo: {
-    userId: string | undefined;
-    email: string | null | undefined;
-    emailVerified: boolean | undefined;
-    isAnonymous: boolean | undefined;
-    tenantId: string | null | undefined;
-    providerInfo: {
-      providerId: string;
-      displayName: string | null;
-      email: string | null;
-      photoUrl: string | null;
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
     }[];
   }
 }
@@ -124,7 +122,9 @@ function App() {
         const unsubHistory = onSnapshot(q, (snapshot) => {
           const items: QuizHistoryItem[] = [];
           snapshot.forEach((doc) => {
-            items.push({ ...doc.data(), id: doc.id } as QuizHistoryItem);
+            const data = doc.data();
+            const timestamp = data.timestamp instanceof Timestamp ? data.timestamp.toMillis() : data.timestamp;
+            items.push({ ...data, id: doc.id, timestamp } as QuizHistoryItem);
           });
           setHistory(items);
         }, (error) => {
@@ -138,7 +138,9 @@ function App() {
         const unsubSaved = onSnapshot(qSaved, (snapshot) => {
           const items: SavedQuiz[] = [];
           snapshot.forEach((doc) => {
-            items.push({ ...doc.data(), id: doc.id } as SavedQuiz);
+            const data = doc.data();
+            const timestamp = data.timestamp instanceof Timestamp ? data.timestamp.toMillis() : data.timestamp;
+            items.push({ ...data, id: doc.id, timestamp } as SavedQuiz);
           });
           setSavedQuizzes(items);
         }, (error) => {
@@ -151,7 +153,9 @@ function App() {
         const unsubFolders = onSnapshot(qFolders, (snapshot) => {
           const items: Folder[] = [];
           snapshot.forEach((doc) => {
-            items.push({ ...doc.data(), id: doc.id } as Folder);
+            const data = doc.data();
+            const timestamp = data.timestamp instanceof Timestamp ? data.timestamp.toMillis() : data.timestamp;
+            items.push({ ...data, id: doc.id, timestamp } as Folder);
           });
           setFolders(items);
         }, (error) => {
@@ -217,11 +221,9 @@ function App() {
         emailVerified: auth.currentUser?.emailVerified,
         isAnonymous: auth.currentUser?.isAnonymous,
         tenantId: auth.currentUser?.tenantId,
-        providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerInfo: auth.currentUser?.providerData?.map(provider => ({
           providerId: provider.providerId,
-          displayName: provider.displayName,
           email: provider.email,
-          photoUrl: provider.photoURL
         })) || []
       },
       operationType,
@@ -272,7 +274,7 @@ function App() {
       const dataToSave: any = {
         id: docRef.id,
         title: fullQuizData.title,
-        timestamp: Date.now(),
+        timestamp: serverTimestamp(),
         quizData: fullQuizData,
         userId: user.uid,
         userAnswers: userAnswers || {},
@@ -305,18 +307,20 @@ function App() {
   const handleMoveQuiz = async (quizId: string, folderId: string | null) => {
     if (!user) return;
     setIsSyncing(true);
+    const path = `users/${user.uid}/savedQuizzes/${quizId}`;
     try {
       const docRef = doc(db, 'users', user.uid, 'savedQuizzes', quizId);
       // If folderId is null, we want to remove the field.
       // Firestore rules require folderId to be a string if it exists.
       if (folderId === null) {
-        await updateDoc(docRef, { folderId: deleteField() });
+        await updateDoc(docRef, { folderId: deleteField(), timestamp: serverTimestamp() });
       } else {
-        await updateDoc(docRef, { folderId });
+        await updateDoc(docRef, { folderId, timestamp: serverTimestamp() });
       }
     } catch (err) {
       console.error("Failed to move quiz", err);
       setErrorMsg("Không thể di chuyển bài thi.");
+      try { handleFirestoreError(err, OperationType.UPDATE, path); } catch (e) {}
     } finally {
       setIsSyncing(false);
     }
@@ -333,7 +337,7 @@ function App() {
         id: newDocRef.id,
         name: name.length >= 100 ? name.substring(0, 95) + "..." : name,
         userId: user.uid,
-        timestamp: Date.now()
+        timestamp: serverTimestamp()
       });
     } catch (err) {
       console.error("Failed to create folder", err);
@@ -349,12 +353,14 @@ function App() {
   const handleRenameFolder = async (id: string, newName: string) => {
     if (!user) return;
     setIsSyncing(true);
+    const path = `users/${user.uid}/folders/${id}`;
     try {
       const docRef = doc(db, 'users', user.uid, 'folders', id);
       await updateDoc(docRef, { name: newName.length >= 100 ? newName.substring(0, 95) + "..." : newName });
     } catch (err) {
       console.error("Failed to rename folder", err);
       setErrorMsg("Không thể đổi tên thư mục.");
+      try { handleFirestoreError(err, OperationType.UPDATE, path); } catch (e) {}
     } finally {
       setIsSyncing(false);
     }
@@ -363,6 +369,7 @@ function App() {
   const handleDeleteFolder = async (id: string) => {
     if (!user) return;
     setIsSyncing(true);
+    const path = `users/${user.uid}/folders/${id}`;
     try {
       // 1. Delete the folder
       const folderRef = doc(db, 'users', user.uid, 'folders', id);
@@ -377,6 +384,7 @@ function App() {
     } catch (err) {
       console.error("Failed to delete folder", err);
       setErrorMsg("Không thể xóa thư mục.");
+      try { handleFirestoreError(err, OperationType.DELETE, path); } catch (e) {}
     } finally {
       setIsSyncing(false);
     }
@@ -385,12 +393,14 @@ function App() {
   const handleDeleteSavedQuiz = async (id: string) => {
     if (!user) return;
     setIsSyncing(true);
+    const path = `users/${user.uid}/savedQuizzes/${id}`;
     try {
       const docRef = doc(db, 'users', user.uid, 'savedQuizzes', id);
       await deleteDoc(docRef);
     } catch (err) {
       console.error("Failed to delete saved quiz", err);
       setErrorMsg("Không thể xóa bài đã lưu.");
+      try { handleFirestoreError(err, OperationType.DELETE, path); } catch (e) {}
     } finally {
       setIsSyncing(false);
     }
@@ -664,8 +674,8 @@ function App() {
       });
       const score = (correct / quizData.questions.length) * 10;
 
-      const newItem: Omit<QuizHistoryItem, 'id'> = {
-        timestamp: Date.now(),
+      const newItem: any = {
+        timestamp: user ? serverTimestamp() : Date.now(),
         title: quizData.title.length >= 500 ? quizData.title.substring(0, 490) + "..." : quizData.title,
         score: score,
         totalQuestions: quizData.questions.length,
@@ -677,6 +687,7 @@ function App() {
 
       if (user) {
         setIsSyncing(true);
+        const path = `users/${user.uid}/history`;
         try {
           const historyRef = collection(db, 'users', user.uid, 'history');
           const newDocRef = doc(historyRef);
@@ -684,10 +695,11 @@ function App() {
         } catch (err) {
           console.error("Failed to save to Firestore", err);
           // Fallback to local storage if Firestore fails
-          const localItem = { ...newItem, id: crypto.randomUUID() } as QuizHistoryItem;
+          const localItem = { ...newItem, id: crypto.randomUUID(), timestamp: Date.now() } as QuizHistoryItem;
           const newHistory = [localItem, ...history];
           setHistory(newHistory);
           localStorage.setItem(HISTORY_KEY, JSON.stringify(newHistory));
+          try { handleFirestoreError(err, OperationType.WRITE, path); } catch (e) {}
         } finally {
           setIsSyncing(false);
         }
@@ -705,12 +717,14 @@ function App() {
   const handleDeleteHistory = async (id: string) => {
     if (user) {
       setIsSyncing(true);
+      const path = `users/${user.uid}/history/${id}`;
       try {
         const docRef = doc(db, 'users', user.uid, 'history', id);
         await deleteDoc(docRef);
       } catch (err) {
         console.error("Failed to delete from Firestore", err);
         setErrorMsg("Không thể xóa bài làm từ đám mây.");
+        try { handleFirestoreError(err, OperationType.DELETE, path); } catch (e) {}
       } finally {
         setIsSyncing(false);
       }
