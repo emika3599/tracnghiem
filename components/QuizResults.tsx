@@ -123,6 +123,16 @@ export const QuizResults: React.FC<QuizResultsProps> = ({
     }
   };
 
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  const handleSaveWrapper = async (folderId?: string) => {
+    if (onSave) {
+      await onSave(folderId);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto pb-12">
       {/* Print-only Header */}
@@ -205,15 +215,30 @@ export const QuizResults: React.FC<QuizResultsProps> = ({
         
         {isLoggedIn && onSave && (
           <Button 
-            onClick={() => onSave()} 
+            onClick={() => handleSaveWrapper()} 
             variant="outline"
             isLoading={isSyncing}
-            className="border-indigo-600 text-indigo-600 hover:bg-indigo-50 dark:border-indigo-400 dark:text-indigo-400 dark:hover:bg-indigo-900/20"
+            className={`transition-all duration-300 ${
+              saveSuccess 
+                ? 'border-green-600 text-green-600 bg-green-50 dark:bg-green-900/20 dark:border-green-400 dark:text-green-400' 
+                : 'border-indigo-600 text-indigo-600 hover:bg-indigo-50 dark:border-indigo-400 dark:text-indigo-400 dark:hover:bg-indigo-900/20'
+            }`}
           >
-            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-            </svg>
-            Lưu tiến độ bài làm
+            {saveSuccess ? (
+              <>
+                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
+                </svg>
+                Đã lưu thành công
+              </>
+            ) : (
+              <>
+                <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                </svg>
+                Lưu tiến độ bài làm
+              </>
+            )}
           </Button>
         )}
         

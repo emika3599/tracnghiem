@@ -34,15 +34,23 @@ export const SavedQuizzes: React.FC<SavedQuizzesProps> = ({
   const [newFolderName, setNewFolderName] = useState('');
   const [movingQuizId, setMovingQuizId] = useState<string | null>(null);
 
-  const formatDate = (timestamp: number) => {
-    return new Date(timestamp).toLocaleDateString('vi-VN', {
+  const formatDate = (timestamp: any) => {
+    if (!timestamp) return 'Đang đồng bộ...';
+    const date = typeof timestamp === 'number' ? new Date(timestamp) : new Date();
+    return date.toLocaleDateString('vi-VN', {
       day: '2-digit',
       month: '2-digit',
       year: 'numeric'
     });
   };
 
-  const filteredQuizzes = quizzes.filter(q => q.folderId === currentFolderId);
+  const filteredQuizzes = quizzes
+    .filter(q => (q.folderId || null) === (currentFolderId || null))
+    .sort((a, b) => {
+      const timeA = typeof a.timestamp === 'number' ? a.timestamp : 0;
+      const timeB = typeof b.timestamp === 'number' ? b.timestamp : 0;
+      return timeB - timeA;
+    });
   const currentFolder = folders.find(f => f.id === currentFolderId);
 
   const handleCreateFolder = () => {

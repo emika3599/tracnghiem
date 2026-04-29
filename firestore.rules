@@ -48,11 +48,11 @@ service cloud.firestore {
 
     function isValidQuizHistoryItem(data) {
       let fields = ['id', 'timestamp', 'title', 'score', 'totalQuestions', 'correctCount', 'timeSpent', 'quizData', 'userAnswers', 'userId'];
-      return data.keys().hasAll(fields) && data.keys().size() == 10 &&
+      return data.keys().hasAll(fields) &&
              isValidId(data.id) &&
-             data.timestamp is number &&
+             (data.timestamp is timestamp || data.timestamp is number) &&
              data.title is string && data.title.size() <= 500 &&
-             data.score is number && data.score >= 0 && data.score <= 10 &&
+             data.score is number && data.score >= 0 && data.score <= 10.1 &&
              data.totalQuestions is number && data.totalQuestions > 0 &&
              data.correctCount is number && data.correctCount >= 0 &&
              data.timeSpent is number && data.timeSpent >= 0 &&
@@ -63,15 +63,13 @@ service cloud.firestore {
 
     function isValidSavedQuiz(data) {
       let requiredFields = ['id', 'title', 'timestamp', 'quizData', 'userId'];
-      let optionalFields = ['folderId', 'userAnswers', 'timeSpent'];
-      // Max possible fields is 8
-      return data.keys().hasAll(requiredFields) && data.keys().size() <= 8 &&
+      return data.keys().hasAll(requiredFields) &&
              isValidId(data.id) &&
              data.title is string && data.title.size() <= 500 &&
-             data.timestamp is number &&
+             (data.timestamp is timestamp || data.timestamp is number) &&
              data.quizData is map &&
              data.userId == request.auth.uid &&
-             (!('folderId' in data) || (data.folderId is string && data.folderId.size() <= 128)) &&
+             (!('folderId' in data) || data.folderId == null || (data.folderId is string && data.folderId.size() <= 128)) &&
              (!('userAnswers' in data) || data.userAnswers is map) &&
              (!('timeSpent' in data) || data.timeSpent is number);
     }
@@ -82,7 +80,7 @@ service cloud.firestore {
              isValidId(data.id) &&
              data.name is string && data.name.size() <= 100 &&
              data.userId == request.auth.uid &&
-             data.timestamp is number;
+             (data.timestamp is timestamp || data.timestamp is number);
     }
 
     // ===============================================================
@@ -95,15 +93,12 @@ service cloud.firestore {
 
       match /history/{historyId} {
         allow get: if isOwner(userId) || isAdmin();
-        allow list: if isOwner(userId) || (isAdmin() && isValidId(historyId)); 
-        // Note: list needs resource.data check usually but here it's nested under userId path.
+        allow list: if isOwner(userId) || isAdmin(); 
         
-        allow create: if isEmailVerified() && isOwner(userId) && 
+        allow create: if isSignedIn() && isOwner(userId) && 
                          isValidId(historyId) && 
-                         isValidQuizHistoryItem(incoming()) &&
-                         incoming().timestamp == request.time.toMillis();
+                         isValidQuizHistoryItem(incoming());
         
-        // History is immutable
         allow update: if false; 
         
         allow delete: if isOwner(userId) || isAdmin();
@@ -111,40 +106,33 @@ service cloud.firestore {
 
       match /savedQuizzes/{quizId} {
         allow get: if isOwner(userId) || isAdmin();
-        allow list: if isOwner(userId) || (isAdmin() && isValidId(quizId));
+        allow list: if isOwner(userId) || isAdmin();
         
-        allow create: if isEmailVerified() && isOwner(userId) && 
+        allow create: if isSignedIn() && isOwner(userId) && 
                          isValidId(quizId) && 
-                         isValidSavedQuiz(incoming()) &&
-                         incoming().timestamp == request.time.toMillis();
+                         isValidSavedQuiz(incoming());
         
-        allow update: if isEmailVerified() && isOwner(userId) && 
+        allow update: if isSignedIn() && isOwner(userId) && 
                          isValidSavedQuiz(incoming()) &&
                          incoming().userId == existing().userId &&
                          incoming().id == existing().id &&
-                         (
-                           // Action: Rename or update metadata
-                           incoming().diff(existing()).affectedKeys().hasOnly(['title', 'timestamp', 'folderId', 'userAnswers', 'timeSpent']) &&
-                           incoming().timestamp == request.time.toMillis()
-                         );
+                         incoming().diff(existing()).affectedKeys().hasOnly(['title', 'timestamp', 'folderId', 'userAnswers', 'timeSpent']);
         
         allow delete: if isOwner(userId) || isAdmin();
       }
 
       match /folders/{folderId} {
         allow get: if isOwner(userId) || isAdmin();
-        allow list: if isOwner(userId) || (isAdmin() && isValidId(folderId));
+        allow list: if isOwner(userId) || isAdmin();
         
-        allow create: if isEmailVerified() && isOwner(userId) && 
+        allow create: if isSignedIn() && isOwner(userId) && 
                          isValidId(folderId) && 
-                         isValidFolder(incoming()) &&
-                         incoming().timestamp == request.time.toMillis();
+                         isValidFolder(incoming());
         
-        allow update: if isEmailVerified() && isOwner(userId) && 
+        allow update: if isSignedIn() && isOwner(userId) && 
                          isValidFolder(incoming()) &&
                          incoming().userId == existing().userId &&
                          incoming().id == existing().id &&
-                         incoming().timestamp == existing().timestamp &&
                          incoming().diff(existing()).affectedKeys().hasOnly(['name']);
         
         allow delete: if isOwner(userId) || isAdmin();

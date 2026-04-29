@@ -234,16 +234,27 @@ function App() {
   };
 
   const sanitizeForFirestore = (obj: any): any => {
+    if (obj === null || typeof obj !== 'object') return obj;
+    
+    // Don't recurse into Firestore-specific objects or Date objects
+    if (
+      obj.constructor?.name === 'FieldValue' || 
+      obj.constructor?.name === 'Timestamp' ||
+      obj instanceof Date ||
+      (typeof obj === 'object' && '_methodName' in obj) // Another way to catch some FieldValues
+    ) {
+      return obj;
+    }
+
     if (Array.isArray(obj)) {
       return obj.map(v => sanitizeForFirestore(v));
-    } else if (obj !== null && typeof obj === 'object') {
-      return Object.fromEntries(
-        Object.entries(obj)
-          .filter(([_, v]) => v !== undefined)
-          .map(([k, v]) => [k, sanitizeForFirestore(v)])
-      );
     }
-    return obj;
+
+    return Object.fromEntries(
+      Object.entries(obj)
+        .filter(([_, v]) => v !== undefined)
+        .map(([k, v]) => [k, sanitizeForFirestore(v)])
+    );
   };
 
   const handleLogout = async () => {
@@ -263,39 +274,56 @@ function App() {
       return;
     }
 
+    if (isSyncing) return; // Prevent multiple clicks
+
     setIsSyncing(true);
     const path = `users/${user.uid}/savedQuizzes`;
     try {
-      // Use existing ID if we loaded this quiz, otherwise create new
-      const docRef = currentSavedQuizId 
-        ? doc(db, 'users', user.uid, 'savedQuizzes', currentSavedQuizId)
-        : doc(collection(db, 'users', user.uid, 'savedQuizzes'));
+      if (currentSavedQuizId) {
+        // FAST UPDATE: Only send what changed
+        const docRef = doc(db, 'users', user.uid, 'savedQuizzes', currentSavedQuizId);
+        const updateData: any = {
+          timestamp: serverTimestamp(),
+          userAnswers: userAnswers || {},
+          timeSpent: timeSpent || 0
+        };
+        
+        if (folderId) updateData.folderId = folderId;
+        
+        // Ensure title is consistent if we want to update it
+        if (fullQuizData.title) {
+          updateData.title = fullQuizData.title.length >= 500 ? fullQuizData.title.substring(0, 490) + "..." : fullQuizData.title;
+        }
+
+        await updateDoc(docRef, sanitizeForFirestore(updateData));
+      } else {
+        // FULL CREATE
+        const docRef = doc(collection(db, 'users', user.uid, 'savedQuizzes'));
+        const dataToSave: any = {
+          id: docRef.id,
+          title: fullQuizData.title.length >= 500 ? fullQuizData.title.substring(0, 490) + "..." : fullQuizData.title,
+          timestamp: serverTimestamp(),
+          quizData: fullQuizData,
+          userId: user.uid,
+          userAnswers: userAnswers || {},
+          timeSpent: timeSpent || 0
+        };
+
+        if (folderId) dataToSave.folderId = folderId;
+
+        await setDoc(docRef, sanitizeForFirestore(dataToSave));
+        setCurrentSavedQuizId(docRef.id);
+      }
       
-      const dataToSave: any = {
-        id: docRef.id,
-        title: fullQuizData.title,
-        timestamp: serverTimestamp(),
-        quizData: fullQuizData,
-        userId: user.uid,
-        userAnswers: userAnswers || {},
-        timeSpent: timeSpent || 0
-      };
-
-      if (folderId) {
-        dataToSave.folderId = folderId;
-      }
-
-      // Ensure title is within Firestore rules limit (500 chars)
-      if (dataToSave.title && dataToSave.title.length >= 500) {
-        dataToSave.title = dataToSave.title.substring(0, 490) + "...";
-      }
-
-      await setDoc(docRef, sanitizeForFirestore(dataToSave), { merge: true });
-      if (!currentSavedQuizId) setCurrentSavedQuizId(docRef.id);
-      setErrorMsg(null); // Clear any previous error
+      setErrorMsg(null);
     } catch (err: any) {
       console.error("Failed to save quiz", err);
-      setErrorMsg(`Không thể lưu bài vào đám mây: ${err.message || 'Lỗi không xác định'}`);
+      // If document not found for some reason, try setDoc as fallback
+      if (err.code === 'not-found' && currentSavedQuizId) {
+         setCurrentSavedQuizId(null);
+         return handleSaveQuiz(folderId);
+      }
+      setErrorMsg(`Không thể lưu bài: ${err.message || 'Lỗi không xác định'}`);
       try {
         handleFirestoreError(err, OperationType.WRITE, path);
       } catch (e) {}

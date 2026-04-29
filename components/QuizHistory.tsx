@@ -12,14 +12,20 @@ interface QuizHistoryProps {
 }
 
 export const QuizHistory: React.FC<QuizHistoryProps> = ({ history, onView, onDelete, onBack, isSyncing, isLoggedIn }) => {
-  const formatDate = (timestamp: number) => {
-    return new Date(timestamp).toLocaleDateString('vi-VN', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+  const formatDate = (timestamp: any) => {
+    if (!timestamp) return 'Đang đồng bộ...';
+    try {
+      const date = typeof timestamp === 'number' ? new Date(timestamp) : new Date();
+      return date.toLocaleDateString('vi-VN', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (e) {
+      return 'Lỗi ngày tháng';
+    }
   };
 
   const formatTime = (seconds: number) => {
@@ -27,6 +33,12 @@ export const QuizHistory: React.FC<QuizHistoryProps> = ({ history, onView, onDel
     const s = seconds % 60;
     return `${m}p ${s}s`;
   };
+
+  const sortedHistory = [...history].sort((a, b) => {
+    const timeA = typeof a.timestamp === 'number' ? a.timestamp : 0;
+    const timeB = typeof b.timestamp === 'number' ? b.timestamp : 0;
+    return timeB - timeA;
+  });
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -68,7 +80,7 @@ export const QuizHistory: React.FC<QuizHistoryProps> = ({ history, onView, onDel
         </div>
       ) : (
         <div className="grid gap-4">
-          {history.sort((a, b) => b.timestamp - a.timestamp).map((item) => (
+          {sortedHistory.map((item) => (
             <div 
               key={item.id}
               className="bg-white dark:bg-slate-800 p-5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-md transition-shadow flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
